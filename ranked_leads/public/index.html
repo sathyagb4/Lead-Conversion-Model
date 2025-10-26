@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ranked Leads</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color-scheme: light dark }
+    body { margin: 0; padding: 24px; background: #0b0b0b; color: #eaeaea }
+    .wrap { max-width: 1100px; margin: 0 auto }
+    .card { background: #141414; border: 1px solid #2a2a2a; border-radius: 14px; padding: 16px }
+    h1 { margin: 0 0 12px 0; font-size: 22px }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px }
+    input, button { background: #0f0f0f; color: #eaeaea; border: 1px solid #2a2a2a; border-radius: 10px; padding: 8px 10px }
+    button { cursor: pointer }
+    .grid { overflow: auto; max-height: 70vh; border: 1px solid #2a2a2a; border-radius: 12px }
+    table { width: 100%; border-collapse: separate; border-spacing: 0 }
+    thead th { position: sticky; top: 0; background: #161616; border-bottom: 1px solid #2a2a2a; text-align: left; padding: 8px 10px }
+    tbody td { border-bottom: 1px solid #1e1e1e; padding: 8px 10px }
+    .badge { padding: 2px 8px; border-radius: 999px; background: #222; border: 1px solid #2a2a2a; font-size: 12px }
+    .top1 { background: rgba(255, 219, 88, 0.08) }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Ranked Leads</h1>
+
+      <div class="controls">
+        <input id="limit" type="number" min="1" max="1000" value="100" title="Max rows" />
+        <input id="groupId" placeholder="Group ID (optional)" />
+        <input id="topK" type="number" min="1" placeholder="Top-K within group (optional)" />
+        <button id="loadBtn">Load</button>
+        <button id="exportBtn">Export CSV</button>
+      </div>
+
+      <div class="grid">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th>rank_global</th>
+              <th>age</th>
+              <th>income</th>
+              <th>credit_score</th>
+              <th>previous_products</th>
+              <th>clicks</th>
+              <th>time_on_site</th>
+              <th>loan_balance</th>
+              <th>amount_spent_on_call</th>
+              <th>clicked_landing_page</th>
+              <th>branch_wait_time</th>
+              <th>referral_bonus</th>
+              <th>ad_impressions</th>
+              <th>state</th>
+              <th>next_state</th>
+              <th>action</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const FIELDS = [
+      'rank_global','age','income','credit_score',
+      'previous_products','clicks','time_on_site','loan_balance','amount_spent_on_call',
+      'clicked_landing_page','branch_wait_time','referral_bonus','ad_impressions'
+    ];
+    const $ = (id) => document.getElementById(id);
+
+    function showError(msg){
+      let bar = document.getElementById('errorbar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'errorbar';
+        bar.style.margin = '8px 0';
+        bar.style.padding = '8px 12px';
+        bar.style.border = '1px solid #9b1c1c';
+        bar.style.background = '#2a0f0f';
+        bar.style.color = '#ffbaba';
+        bar.style.borderRadius = '10px';
+        document.querySelector('.card').insertBefore(bar, document.querySelector('.grid'));
+      }
+      bar.textContent = msg;
+    }
+
+      // --- States config ---
+   let TRANSITIONS = {};
+  async function getStatesConfig() {
+           const r = await fetch('/api/config/states');
+           if (!r.ok) throw new Error('Failed to load states config');
+           const data = await r.json();
+           TRANSITIONS = data.transitions || {};
+       }
+       const allowedNextStates = (cur) => TRANSITIONS[cur] || [];
+
+    async function loadData(){
+      try {
+        const bar = document.getElementById('errorbar');
+        if (bar) bar.remove();
+
+        const params = new URLSearchParams();
+        const limit = $('limit').value || '100';
+        params.set('limit', limit);
+
+        const groupId = $('groupId').value.trim();
+        if (groupId) params.set('groupId', groupId);
+
+        const topK = $('topK').value.trim();
+        if (topK) params.set('topK', topK);
+
+        const url = `/api/leads?${params.toString()}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`API ${res.status}: ${text}`);
+        }
+        const rows = await res.json();
+        render(rows);
+        window.__rows = rows;
+      } catch (err) {
+        console.error(err);
+        showError(String(err.message || err));
+      }
+    }
+
+    function render(rows){
+  const tbody = $('tbl').querySelector('tbody');
+  tbody.innerHTML = '';
+  for (const r of rows){
+    const tr = document.createElement('tr');
+    if (Number(r.rank_within_group) === 1) tr.classList.add('top1');
+
+    for (const f of FIELDS){
+      const td = document.createElement('td');
+      let v = r[f];
+      td.textContent = (v === undefined || v === null) ? '' : v;
+
+      if (f === 'relevance_score') {
+        const span = document.createElement('span');
+        span.className = 'badge'; span.textContent = td.textContent;
+        td.textContent = ''; td.appendChild(span);
+      }
+      tr.appendChild(td);
+    }
+
+    // --- state badge ---
+    const tdState = document.createElement('td');
+    const curState = r.state || 'New';
+    const chip = document.createElement('span');
+    chip.className = 'badge';
+    chip.textContent = curState;
+    tdState.appendChild(chip);
+    tr.appendChild(tdState);
+
+    // --- next state dropdown ---
+    const tdNext = document.createElement('td');
+    const sel = document.createElement('select');
+    const nexts = allowedNextStates(curState);
+    if (nexts.length === 0) {
+      sel.disabled = true;
+      const opt = document.createElement('option');
+      opt.value = ''; opt.textContent = 'No transitions'; opt.disabled = true; opt.selected = true;
+      sel.appendChild(opt);
+    } else {
+      const opt0 = document.createElement('option');
+      opt0.value = ''; opt0.textContent = 'Choose…'; opt0.disabled = true; opt0.selected = true;
+      sel.appendChild(opt0);
+      nexts.forEach(ns => {
+        const o = document.createElement('option');
+        o.value = ns; o.textContent = ns; sel.appendChild(o);
+      });
+    }
+    tdNext.appendChild(sel);
+    tr.appendChild(tdNext);
+
+    // --- action button ---
+    const tdAct = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.textContent = 'Update';
+    btn.disabled = sel.disabled;
+    btn.addEventListener('click', async () => {
+      const toState = sel.value;
+      if (!toState) return;
+      btn.disabled = true; sel.disabled = true;
+      try {
+        const res = await fetch(`/api/leads/${encodeURIComponent(r._id)}/state`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ toState })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({}));
+          throw new Error(err.error || 'Failed to update state');
+        }
+        const data = await res.json();
+        if (data.removedFromUI) {
+          tr.style.opacity = 0.5;
+          setTimeout(() => tr.remove(), 150);
+        } else {
+          // refresh the chip + dropdown
+          const newState = data.lead.state || 'New';
+          chip.textContent = newState;
+          sel.innerHTML = '';
+          const nxt2 = allowedNextStates(newState);
+          if (nxt2.length === 0) {
+            sel.disabled = true;
+            const o = document.createElement('option');
+            o.value = ''; o.textContent = 'No transitions'; o.disabled = true; o.selected = true;
+            sel.appendChild(o);
+            btn.disabled = true;
+          } else {
+            const o0 = document.createElement('option');
+            o0.value = ''; o0.textContent = 'Choose…'; o0.disabled = true; o0.selected = true;
+            sel.appendChild(o0);
+            nxt2.forEach(ns => {
+              const o = document.createElement('option');
+              o.value = ns; o.textContent = ns; sel.appendChild(o);
+            });
+            sel.disabled = false; btn.disabled = false;
+          }
+        }
+      } catch (e) {
+        showError(String(e.message || e));
+        btn.disabled = false; sel.disabled = false;
+      }
+    });
+    tdAct.appendChild(btn);
+    tr.appendChild(tdAct);
+
+    tbody.appendChild(tr);
+  }
+}
+
+    function exportCSV(){
+      const rows = window.__rows || [];
+      const header = FIELDS.join(',');
+      const body = rows.map(r => FIELDS.map(f => (r[f] ?? '')).join(',')).join('\n');
+      const csv = header + '\n' + body;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'leads.csv'; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    $('loadBtn').addEventListener('click', () => {
+      loadData().catch(e => showError(String(e)));
+    });
+    $('exportBtn').addEventListener('click', exportCSV);
+
+    // Auto load on open (get config first)
+(async () => {
+  try {
+    await getStatesConfig();
+    await loadData();
+  } catch (e) {
+    showError(String(e));
+  }
+})();
+  </script>
+</body>
+</html>
